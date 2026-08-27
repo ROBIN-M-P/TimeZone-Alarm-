@@ -1,0 +1,28 @@
+name: timezone_alarm_app
+description: Smart world timezone alarm clock that converts source timezone times to your exact local time with automatic seasonal and daylight saving adjustments.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  timezone: ^0.9.4
+  intl: ^0.19.0
+  shared_preferences: ^2.2.2
+  audioplayers: ^6.0.0
+  vibration: ^2.0.0
+  uuid: ^4.3.3
+  google_fonts: ^6.2.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/sounds/
