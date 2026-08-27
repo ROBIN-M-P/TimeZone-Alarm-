@@ -1,0 +1,6 @@
+{
+  "name": "Timezone Alarm",
+  "description": "Smart world timezone alarm clock that converts source timezone times to your exact local time with automatic seasonal and daylight saving time adjustments.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
