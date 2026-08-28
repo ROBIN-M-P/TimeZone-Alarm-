@@ -26,6 +26,14 @@ flutter_app/build/app/outputs/flutter-apk/app-release.apk
 ```
 Transfer this file to any Android device to install and use immediately.
 
+### Mobile-Friendly Option: Build APK on GitHub
+If you cannot run Flutter locally (for example, when using mobile), use the included GitHub Actions workflow:
+
+1. Open the repository on GitHub.
+2. Go to **Actions** → **Build Android APK**.
+3. Tap **Run workflow**.
+4. After it completes, open the run and download the **app-release-apk** artifact.
+
 ---
 
 ## 📦 What is Bundled Inside (Zero Post-Install Downloads Needed)
