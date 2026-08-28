@@ -12,43 +12,110 @@ class AlarmManagerService extends ChangeNotifier {
   Timer? _ticker;
   Timer? _vibrationTimer;
   final AudioPlayer _audioPlayer = AudioPlayer();
-  final Set<String> _triggeredSet = {};
+  final Set<String> _triggeredMinuteKeys = {};
+  bool _use24Hour = false;
+  String _searchQuery = '';
+  String _filterTab = 'all'; // 'all', 'active', 'inactive'
 
   List<Alarm> get alarms => _alarms;
   Alarm? get ringingAlarm => _ringingAlarm;
+  bool get use24Hour => _use24Hour;
+  String get searchQuery => _searchQuery;
+  String get filterTab => _filterTab;
+
+  List<Alarm> get filteredAlarms {
+    return _alarms.where((alarm) {
+      if (_filterTab == 'active' && !alarm.enabled) return false;
+      if (_filterTab == 'inactive' && alarm.enabled) return false;
+      if (_searchQuery.isNotEmpty) {
+        final query = _searchQuery.toLowerCase();
+        final matchTitle = alarm.title.toLowerCase().contains(query);
+        final matchTz = alarm.sourceTimeZone.toLowerCase().contains(query);
+        if (!matchTitle && !matchTz) return false;
+      }
+      return true;
+    }).toList();
+  }
 
   AlarmManagerService() {
-    _loadAlarms();
+    TimeZoneHelper.initialize();
+    _loadData();
     _startTicker();
   }
 
-  Future<void> _loadAlarms() async {
+  Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
-    final List<String>? stored = prefs.getStringList('saved_alarms');
-    if (stored != null) {
+    _use24Hour = prefs.getBool('tz_use_24h') ?? false;
+
+    final List<String>? stored = prefs.getStringList('tz_saved_alarms_v2');
+    if (stored != null && stored.isNotEmpty) {
       _alarms = stored.map((s) => Alarm.fromJson(s)).toList();
-      notifyListeners();
     } else {
-      // Seed default sample alarm
+      // Seed preset alarms matching the web app
       _alarms = [
         Alarm(
-          id: 'default-team-sync',
-          label: 'US East Standup',
-          sourceTimeZone: 'America/New_York',
-          sourceHour: 9,
-          sourceMinute: 30,
-          repeatDays: [1, 2, 3, 4, 5],
-          alertMode: 'sound_and_vibrate',
+          id: 'alarm-sample-pst',
+          title: 'US Pacific Sync (e.g. 6:30 AM PST/PDT)',
+          sourceTimeZone: 'America/Los_Angeles',
+          sourceTime: '06:30',
+          days: [1, 2, 3, 4, 5], // Mon-Fri
+          enabled: true,
+          sound: 'chime',
+          volume: 0.85,
+          vibrate: true,
+          createdAt: DateTime.now().millisecondsSinceEpoch - 3600000,
+        ),
+        Alarm(
+          id: 'alarm-sample-london',
+          title: 'London Market Opening',
+          sourceTimeZone: 'Europe/London',
+          sourceTime: '08:00',
+          days: [1, 2, 3, 4, 5],
+          enabled: true,
+          sound: 'marimba',
+          volume: 0.80,
+          vibrate: true,
+          createdAt: DateTime.now().millisecondsSinceEpoch - 7200000,
+        ),
+        Alarm(
+          id: 'alarm-sample-tokyo',
+          title: 'Tokyo Morning Standup',
+          sourceTimeZone: 'Asia/Tokyo',
+          sourceTime: '09:30',
+          days: [1, 2, 3, 4, 5],
+          enabled: false,
+          sound: 'digital',
+          volume: 0.75,
+          vibrate: true,
+          createdAt: DateTime.now().millisecondsSinceEpoch - 10800000,
         ),
       ];
       _saveAlarms();
     }
+    notifyListeners();
   }
 
   Future<void> _saveAlarms() async {
     final prefs = await SharedPreferences.getInstance();
     final List<String> encoded = _alarms.map((a) => a.toJson()).toList();
-    await prefs.setStringList('saved_alarms', encoded);
+    await prefs.setStringList('tz_saved_alarms_v2', encoded);
+    notifyListeners();
+  }
+
+  void toggleTimeFormat() async {
+    _use24Hour = !_use24Hour;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('tz_use_24h', _use24Hour);
+    notifyListeners();
+  }
+
+  void setSearchQuery(String query) {
+    _searchQuery = query;
+    notifyListeners();
+  }
+
+  void setFilterTab(String tab) {
+    _filterTab = tab;
     notifyListeners();
   }
 
@@ -73,14 +140,30 @@ class AlarmManagerService extends ChangeNotifier {
   void toggleAlarm(String id) {
     final index = _alarms.indexWhere((a) => a.id == id);
     if (index != -1) {
-      _alarms[index] = _alarms[index].copyWith(isEnabled: !_alarms[index].isEnabled);
+      final current = _alarms[index];
+      _alarms[index] = current.copyWith(
+        enabled: !current.enabled,
+        clearSnooze: true,
+      );
       _saveAlarms();
     }
   }
 
+  void duplicateAlarm(String id) {
+    final original = _alarms.firstWhere((a) => a.id == id, orElse: () => _alarms.first);
+    final copy = original.copyWith(
+      id: 'alarm-${DateTime.now().millisecondsSinceEpoch}',
+      title: '${original.title} (Copy)',
+      createdAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    addAlarm(copy);
+  }
+
   void _startTicker() {
-    _ticker = Timer.periodic(const Duration(seconds: 1), (timer) {
+    _ticker?.cancel();
+    _ticker = Timer.periodic(const Duration(seconds: 1), (_) {
       _checkAlarms();
+      notifyListeners(); // Keep relative countdowns fresh
     });
   }
 
@@ -89,7 +172,7 @@ class AlarmManagerService extends ChangeNotifier {
     final now = DateTime.now();
 
     for (final alarm in _alarms) {
-      if (!alarm.isEnabled) continue;
+      if (!alarm.enabled) continue;
 
       DateTime nextTrigger;
       if (alarm.snoozeUntil != null) {
@@ -99,81 +182,115 @@ class AlarmManagerService extends ChangeNotifier {
           sourceTimeZone: alarm.sourceTimeZone,
           sourceHour: alarm.sourceHour,
           sourceMinute: alarm.sourceMinute,
-          repeatDays: alarm.repeatDays,
+          repeatDays: alarm.days,
         );
       }
 
-      final diff = (now.millisecondsSinceEpoch - nextTrigger.millisecondsSinceEpoch).abs();
-      final triggerKey = '${alarm.id}_${now.hour}_${now.minute}';
+      final diff = nextTrigger.difference(now);
+      final triggerKey = '${alarm.id}_${nextTrigger.year}-${nextTrigger.month}-${nextTrigger.day}_${nextTrigger.hour}:${nextTrigger.minute}';
 
-      if (diff < 1500 && !_triggeredSet.contains(triggerKey)) {
-        _triggeredSet.add(triggerKey);
+      if (diff.inSeconds.abs() <= 2 && !_triggeredMinuteKeys.contains(triggerKey)) {
+        _triggeredMinuteKeys.add(triggerKey);
         _triggerAlarm(alarm);
         break;
       }
     }
   }
 
-  void _triggerAlarm(Alarm alarm) async {
+  void _triggerAlarm(Alarm alarm) {
     _ringingAlarm = alarm;
     notifyListeners();
 
-    if (alarm.alertMode != 'vibrate_only' && alarm.sound != 'silent') {
-      try {
-        _audioPlayer.setReleaseMode(ReleaseMode.loop);
-        await _audioPlayer.play(AssetSource('sounds/alarm_classic.mp3'));
-      } catch (_) {}
+    _startAlarmAudioAndVibration(alarm);
+  }
+
+  Future<void> _startAlarmAudioAndVibration(Alarm alarm) async {
+    // Sound playback
+    try {
+      await _audioPlayer.setReleaseMode(ReleaseMode.loop);
+      await _audioPlayer.setVolume(alarm.volume);
+      // Play system or tone stream
+      await _audioPlayer.play(AssetSource('sounds/alarm.mp3'));
+    } catch (_) {
+      // Fallback
     }
 
-    if (alarm.alertMode != 'sound_only' && alarm.vibrate) {
-      _startVibrationLoop();
+    // Vibration loop
+    if (alarm.vibrate) {
+      try {
+        final hasVibrator = await Vibration.hasVibrator();
+        if (hasVibrator == true) {
+          _vibrationTimer?.cancel();
+          _vibrationTimer = Timer.periodic(const Duration(milliseconds: 1200), (_) {
+            Vibration.vibrate(duration: 800);
+          });
+          Vibration.vibrate(duration: 800);
+        }
+      } catch (_) {}
     }
   }
 
-  void _startVibrationLoop() {
-    _vibrationTimer?.cancel();
-    Vibration.hasVibrator().then((hasVibe) {
-      if (hasVibe == true) {
-        Vibration.vibrate(pattern: [0, 800, 200, 800]);
-        _vibrationTimer = Timer.periodic(const Duration(milliseconds: 2000), (_) {
-          Vibration.vibrate(pattern: [0, 800, 200, 800]);
-        });
-      }
-    });
+  void previewSound(String soundName, double volume) async {
+    try {
+      final player = AudioPlayer();
+      await player.setVolume(volume);
+      await player.play(AssetSource('sounds/alarm.mp3'));
+      Timer(const Duration(seconds: 3), () => player.stop());
+    } catch (_) {}
+  }
+
+  void snoozeAlarm(int minutes) {
+    if (_ringingAlarm == null) return;
+    _stopAudioAndVibration();
+
+    final alarmId = _ringingAlarm!.id;
+    final snoozeTime = DateTime.now().add(Duration(minutes: minutes));
+
+    final index = _alarms.indexWhere((a) => a.id == alarmId);
+    if (index != -1) {
+      _alarms[index] = _alarms[index].copyWith(snoozeUntil: snoozeTime);
+      _saveAlarms();
+    }
+
+    _ringingAlarm = null;
+    notifyListeners();
   }
 
   void dismissAlarm() {
-    _vibrationTimer?.cancel();
-    Vibration.cancel();
-    _audioPlayer.stop();
+    if (_ringingAlarm == null) return;
+    _stopAudioAndVibration();
 
-    if (_ringingAlarm != null && _ringingAlarm!.repeatDays.isEmpty) {
-      toggleAlarm(_ringingAlarm!.id);
+    final alarmId = _ringingAlarm!.id;
+    final index = _alarms.indexWhere((a) => a.id == alarmId);
+    if (index != -1) {
+      // If one-off alarm (no repeat days), disable it
+      if (_alarms[index].days.isEmpty) {
+        _alarms[index] = _alarms[index].copyWith(enabled: false, clearSnooze: true);
+      } else {
+        _alarms[index] = _alarms[index].copyWith(clearSnooze: true);
+      }
+      _saveAlarms();
     }
 
     _ringingAlarm = null;
     notifyListeners();
   }
 
-  void snoozeAlarm() {
-    if (_ringingAlarm == null) return;
+  void _stopAudioAndVibration() {
+    try {
+      _audioPlayer.stop();
+    } catch (_) {}
     _vibrationTimer?.cancel();
-    Vibration.cancel();
-    _audioPlayer.stop();
-
-    final snoozedAlarm = _ringingAlarm!.copyWith(
-      snoozeUntil: DateTime.now().add(Duration(minutes: _ringingAlarm!.snoozeMinutes)),
-    );
-    updateAlarm(snoozedAlarm);
-
-    _ringingAlarm = null;
-    notifyListeners();
+    _vibrationTimer = null;
+    try {
+      Vibration.cancel();
+    } catch (_) {}
   }
 
   @override
   void dispose() {
     _ticker?.cancel();
-    _vibrationTimer?.cancel();
+    _stopAudioAndVibration();
     _audioPlayer.dispose();
     super.dispose();
   }

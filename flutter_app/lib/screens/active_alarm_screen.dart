@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../models/alarm.dart';
+import '../services/timezone_helper.dart';
 
-class ActiveAlarmScreen extends StatelessWidget {
+class ActiveAlarmScreen extends StatefulWidget {
   final Alarm alarm;
   final VoidCallback onDismiss;
-  final VoidCallback onSnooze;
+  final Function(int minutes) onSnooze;
 
   const ActiveAlarmScreen({
     super.key,
@@ -15,74 +16,171 @@ class ActiveAlarmScreen extends StatelessWidget {
   });
 
   @override
+  State<ActiveAlarmScreen> createState() => _ActiveAlarmScreenState();
+}
+
+class _ActiveAlarmScreenState extends State<ActiveAlarmScreen> with SingleTickerProviderStateMixin {
+  late AnimationController _pulseController;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final now = DateTime.now();
+    final localTimeStr = DateFormat('h:mm:ss a').format(now);
 
-    return Material(
-      color: Colors.black.withOpacity(0.95),
-      child: SafeArea(
+    final zoneInfo = TimeZoneHelper.allTimeZones.firstWhere(
+      (z) => z.iana == widget.alarm.sourceTimeZone,
+      orElse: () => TimeZoneInfo(
+        iana: widget.alarm.sourceTimeZone,
+        label: widget.alarm.sourceTimeZone,
+        city: widget.alarm.sourceTimeZone.split('/').last,
+        country: '',
+        flag: '🌐',
+        region: '',
+      ),
+    );
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF020617),
+      body: SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(24.0),
+          padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 32.0),
           child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Container(
-                padding: const EdgeInsets.all(28),
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Colors.indigo.withOpacity(0.2),
-                  border: Border.all(color: Colors.indigoAccent, width: 2),
-                ),
-                child: const Icon(Icons.alarm_on, size: 72, color: Colors.indigoAccent),
-              ),
-              const SizedBox(height: 32),
-              Text(
-                alarm.label,
-                style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Colors.white),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                DateFormat('hh:mm:ss a').format(now),
-                style: const TextStyle(fontSize: 48, fontWeight: FontWeight.w900, color: Colors.indigoAccent),
-              ),
-              const SizedBox(height: 8),
+              // Header indicator
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF1E293B),
+                  color: const Color(0xFFEF4444).withOpacity(0.15),
                   borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: const Color(0xFFEF4444).withOpacity(0.4)),
                 ),
-                child: Text(
-                  'Source: ${alarm.sourceHour.toString().padLeft(2, '0')}:${alarm.sourceMinute.toString().padLeft(2, '0')} (${alarm.sourceTimeZone.split('/').last})',
-                  style: const TextStyle(color: Colors.white70, fontSize: 14),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.notifications_active, color: Color(0xFFEF4444), size: 16),
+                    SizedBox(width: 8),
+                    Text(
+                      'ALARM RINGING',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFFEF4444), letterSpacing: 1.2),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 48),
-              Row(
+
+              // Animated Pulsing Bell Icon
+              Column(
                 children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 18),
-                        side: const BorderSide(color: Colors.white30),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                      ),
-                      onPressed: onSnooze,
-                      icon: const Icon(Icons.snooze, color: Colors.white),
-                      label: Text('Snooze (${alarm.snoozeMinutes}m)', style: const TextStyle(color: Colors.white, fontSize: 16)),
+                  AnimatedBuilder(
+                    animation: _pulseController,
+                    builder: (context, child) {
+                      return Transform.scale(
+                        scale: 1.0 + (_pulseController.value * 0.15),
+                        child: Container(
+                          width: 120,
+                          height: 120,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: const Color(0xFF6366F1).withOpacity(0.2),
+                            border: Border.all(
+                              color: const Color(0xFF818CF8).withOpacity(0.5 + (_pulseController.value * 0.5)),
+                              width: 3,
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: const Color(0xFF6366F1).withOpacity(0.4),
+                                blurRadius: 30 * _pulseController.value,
+                                spreadRadius: 10 * _pulseController.value,
+                              ),
+                            ],
+                          ),
+                          child: const Icon(
+                            Icons.alarm,
+                            size: 64,
+                            color: Color(0xFF818CF8),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 32),
+
+                  // Title & Time info
+                  Text(
+                    widget.alarm.title,
+                    style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Colors.white),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Target: ${widget.alarm.sourceTime} in ${zoneInfo.flag} ${zoneInfo.city}',
+                    style: const TextStyle(fontSize: 15, color: Color(0xFF38BDF8), fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 12),
+                  Text(
+                    localTimeStr,
+                    style: const TextStyle(
+                      fontSize: 36,
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                      letterSpacing: -1,
                     ),
                   ),
-                  const SizedBox(width: 16),
-                  Expanded(
-                    child: ElevatedButton.icon(
+                ],
+              ),
+
+              // Snooze & Dismiss Controls
+              Column(
+                children: [
+                  const Text('Snooze options:', style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8))),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      _buildSnoozeButton(5),
+                      const SizedBox(width: 12),
+                      _buildSnoozeButton(10),
+                      const SizedBox(width: 12),
+                      _buildSnoozeButton(15),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Dismiss Button
+                  SizedBox(
+                    width: double.infinity,
+                    height: 56,
+                    child: ElevatedButton(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF6366F1),
-                        padding: const EdgeInsets.symmetric(vertical: 18),
+                        backgroundColor: const Color(0xFFEF4444),
+                        foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        elevation: 4,
                       ),
-                      onPressed: onDismiss,
-                      icon: const Icon(Icons.check, color: Colors.white),
-                      label: const Text('Dismiss', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
+                      onPressed: widget.onDismiss,
+                      child: const Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.close, size: 24),
+                          SizedBox(width: 8),
+                          Text('DISMISS ALARM', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, letterSpacing: 1)),
+                        ],
+                      ),
                     ),
                   ),
                 ],
@@ -91,6 +189,20 @@ class ActiveAlarmScreen extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildSnoozeButton(int mins) {
+    return OutlinedButton(
+      style: OutlinedButton.styleFrom(
+        foregroundColor: Colors.white,
+        side: const BorderSide(color: Color(0xFF1E293B)),
+        backgroundColor: const Color(0xFF0F172A),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      ),
+      onPressed: () => widget.onSnooze(mins),
+      child: Text('+${mins}m', style: const TextStyle(fontWeight: FontWeight.bold)),
     );
   }
 }
