@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:audioplayers/audioplayers.dart';
 import 'package:vibration/vibration.dart';
@@ -7,6 +9,8 @@ import '../models/alarm.dart';
 import 'timezone_helper.dart';
 
 class AlarmManagerService extends ChangeNotifier {
+  static const MethodChannel _nativeChannel = MethodChannel('com.timezonealarm.app/native_alarm');
+
   List<Alarm> _alarms = [];
   Alarm? _ringingAlarm;
   Timer? _ticker;
@@ -92,6 +96,7 @@ class AlarmManagerService extends ChangeNotifier {
       ];
       _saveAlarms();
     }
+    _syncNativeAlarms();
     notifyListeners();
   }
 
@@ -99,7 +104,40 @@ class AlarmManagerService extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     final List<String> encoded = _alarms.map((a) => a.toJson()).toList();
     await prefs.setStringList('tz_saved_alarms_v2', encoded);
+    _syncNativeAlarms();
     notifyListeners();
+  }
+
+  /// Synchronize all alarms with Android system AlarmManager so alarms ring even when app is killed
+  void _syncNativeAlarms() {
+    try {
+      final List<Map<String, dynamic>> payload = _alarms.map((alarm) {
+        DateTime nextTrigger;
+        if (alarm.snoozeUntil != null) {
+          nextTrigger = alarm.snoozeUntil!;
+        } else {
+          nextTrigger = TimeZoneHelper.calculateNextLocalOccurrence(
+            sourceTimeZone: alarm.sourceTimeZone,
+            sourceHour: alarm.sourceHour,
+            sourceMinute: alarm.sourceMinute,
+            repeatDays: alarm.days,
+          );
+        }
+
+        return {
+          'id': alarm.id,
+          'title': alarm.title,
+          'sourceTimeZone': alarm.sourceTimeZone,
+          'sourceTime': alarm.sourceTime,
+          'enabled': alarm.enabled,
+          'nextTriggerMillis': nextTrigger.millisecondsSinceEpoch,
+        };
+      }).toList();
+
+      _nativeChannel.invokeMethod('syncAllAlarms', {
+        'alarmsJson': jsonEncode(payload),
+      });
+    } catch (_) {}
   }
 
   void toggleTimeFormat() async {
