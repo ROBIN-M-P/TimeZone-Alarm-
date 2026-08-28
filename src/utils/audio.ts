@@ -47,6 +47,9 @@ export function playAlarmSoundLoop(soundType: AlarmSoundType, volume: number = 0
   }
 
   const ctx = getAudioContext();
+  if (ctx.state === 'suspended') {
+    ctx.resume().catch(() => {});
+  }
   let isRunning = true;
   let nextNoteTimeout: ReturnType<typeof setTimeout> | null = null;
 

@@ -1,6 +1,6 @@
 {
-  "name": "Timezone Alarm",
-  "description": "Smart world timezone alarm clock that converts source timezone times to your exact local time with automatic seasonal and daylight saving time adjustments.",
+  "name": "Time Zone Alarm: UTC & World",
+  "description": "Set alarms on another city's clock — for meetings, market opens, and UTC on-call. Side-by-side time zone alarms with automatic Daylight Saving Time tracking.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -4,16 +4,20 @@ import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.Service
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
+import android.media.AudioManager
+import android.media.MediaPlayer
 import android.media.RingtoneManager
 import android.net.Uri
 import android.os.Build
+import android.os.IBinder
 import android.os.PowerManager
-import android.os.Vibrator
 import android.os.VibrationEffect
+import android.os.Vibrator
 import androidx.core.app.NotificationCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -27,6 +31,11 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
+        // Stop ringing sound service if user enters/opens the app
+        if (intent?.getBooleanExtra("isAlarmTriggered", false) == true) {
+            AlarmSoundService.stopService(applicationContext)
+        }
+
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "scheduleNativeAlarm" -> {
@@ -35,7 +44,10 @@ class MainActivity : FlutterActivity() {
                     val triggerAtMillis = call.argument<Long>("triggerAtMillis") ?: 0L
                     val timeString = call.argument<String>("timeString") ?: ""
                     val timeZone = call.argument<String>("timeZone") ?: ""
-                    
+                    val sound = call.argument<String>("sound") ?: "chime"
+                    val volume = call.argument<Double>("volume") ?: 0.8
+                    val vibrate = call.argument<Boolean>("vibrate") ?: true
+
                     if (triggerAtMillis > System.currentTimeMillis()) {
                         AlarmScheduler.scheduleExactAlarm(
                             context = applicationContext,
@@ -43,6 +55,9 @@ class MainActivity : FlutterActivity() {
                             title = title,
                             timeString = timeString,
                             timeZone = timeZone,
+                            sound = sound,
+                            volume = volume,
+                            vibrate = vibrate,
                             triggerAtMillis = triggerAtMillis
                         )
                     }
@@ -51,6 +66,10 @@ class MainActivity : FlutterActivity() {
                 "cancelNativeAlarm" -> {
                     val alarmId = call.argument<String>("alarmId") ?: ""
                     AlarmScheduler.cancelAlarm(applicationContext, alarmId)
+                    result.success(true)
+                }
+                "stopAlarmSound" -> {
+                    AlarmSoundService.stopService(applicationContext)
                     result.success(true)
                 }
                 "syncAllAlarms" -> {
@@ -74,6 +93,9 @@ object AlarmScheduler {
         title: String,
         timeString: String,
         timeZone: String,
+        sound: String = "chime",
+        volume: Double = 0.8,
+        vibrate: Boolean = true,
         triggerAtMillis: Long
     ) {
         val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
@@ -83,6 +105,9 @@ object AlarmScheduler {
             putExtra("title", title)
             putExtra("timeString", timeString)
             putExtra("timeZone", timeZone)
+            putExtra("sound", sound)
+            putExtra("volume", volume)
+            putExtra("vibrate", vibrate)
         }
 
         val requestCode = alarmId.hashCode()
@@ -131,7 +156,6 @@ object AlarmScheduler {
     }
 
     fun syncAlarms(context: Context, alarmsJson: String) {
-        // Save to persistent Android SharedPreferences for BootReceiver recovery
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().putString(KEY_ALARMS, alarmsJson).apply()
 
@@ -144,10 +168,16 @@ object AlarmScheduler {
                 val title = obj.optString("title", "Alarm")
                 val timeString = obj.optString("sourceTime", "")
                 val timeZone = obj.optString("sourceTimeZone", "")
+                val sound = obj.optString("sound", "chime")
+                val volume = obj.optDouble("volume", 0.8)
+                val vibrate = obj.optBoolean("vibrate", true)
                 val nextLocalMillis = obj.optLong("nextTriggerMillis", 0L)
 
                 if (enabled && nextLocalMillis > System.currentTimeMillis()) {
-                    scheduleExactAlarm(context, alarmId, title, timeString, timeZone, nextLocalMillis)
+                    scheduleExactAlarm(
+                        context, alarmId, title, timeString, timeZone,
+                        sound, volume, vibrate, nextLocalMillis
+                    )
                 } else {
                     cancelAlarm(context, alarmId)
                 }
@@ -164,114 +194,203 @@ object AlarmScheduler {
     }
 }
 
-class AlarmReceiver : BroadcastReceiver() {
+/**
+ * Dedicated Foreground Service for Continuous Alarm Sound & Vibration
+ * Runs in background or when app process is killed.
+ */
+class AlarmSoundService : Service() {
+    private var mediaPlayer: MediaPlayer? = null
+    private var vibrator: Vibrator? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+
     companion object {
-        const val CHANNEL_ID = "timezone_alarm_channel_high"
-        const val CHANNEL_NAME = "Timezone Alarm Critical Alerts"
-    }
+        const val CHANNEL_ID = "timezone_alarm_channel_high_v2"
+        const val NOTIFICATION_ID = 99991
 
-    override fun onReceive(context: Context, intent: Intent) {
-        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
-        val wakeLock = powerManager?.newWakeLock(
-            PowerManager.PARTIAL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
-            "TimezoneAlarm:WakeLockTag"
-        )
-        wakeLock?.acquire(30000L) // Hold wake lock for 30s to sound alarm and show full screen
-
-        val alarmId = intent.getStringExtra("alarmId") ?: ""
-        val title = intent.getStringExtra("title") ?: "Alarm Ringing"
-        val timeString = intent.getStringExtra("timeString") ?: ""
-        val timeZone = intent.getStringExtra("timeZone") ?: ""
-
-        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
-        // Create high priority notification channel with alarm sound & vibration
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val alarmSound: Uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-                ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
-
-            val audioAttributes = AudioAttributes.Builder()
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                .setUsage(AudioAttributes.USAGE_ALARM)
-                .build()
-
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                CHANNEL_NAME,
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Urgent alarm notifications that ring when app is closed or phone is locked"
-                enableVibration(true)
-                vibrationPattern = longArrayOf(0, 800, 400, 800, 400, 800)
-                setSound(alarmSound, audioAttributes)
-                setBypassDnd(true)
-                lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
+        fun startService(context: Context, intent: Intent) {
+            val serviceIntent = Intent(context, AlarmSoundService::class.java).apply {
+                putExtras(intent)
             }
-            notificationManager.createNotificationChannel(channel)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(serviceIntent)
+            } else {
+                context.startService(serviceIntent)
+            }
         }
 
-        // Full-screen intent launching MainActivity directly when alarm triggers
-        val fullScreenIntent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        fun stopService(context: Context) {
+            val serviceIntent = Intent(context, AlarmSoundService::class.java)
+            context.stopService(serviceIntent)
+        }
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as? PowerManager
+        wakeLock = powerManager?.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP,
+            "TimezoneAlarm:SoundServiceWakeLock"
+        )
+        wakeLock?.acquire(60000L) // 1 minute max ringing loop
+
+        val alarmId = intent?.getStringExtra("alarmId") ?: ""
+        val title = intent?.getStringExtra("title") ?: "Alarm Ringing"
+        val timeString = intent?.getStringExtra("timeString") ?: ""
+        val timeZone = intent?.getStringExtra("timeZone") ?: ""
+        val volume = intent?.getDoubleExtra("volume", 0.8) ?: 0.8
+        val vibrate = intent?.getBooleanExtra("vibrate", true) ?: true
+
+        createNotificationChannel()
+
+        val fullScreenIntent = Intent(this, MainActivity::class.java).apply {
+            this.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             putExtra("alarmId", alarmId)
             putExtra("isAlarmTriggered", true)
         }
         val fullScreenPendingIntent = PendingIntent.getActivity(
-            context,
+            this,
             alarmId.hashCode(),
             fullScreenIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val alarmSound: Uri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
-            ?: RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+        val dismissIntent = Intent(this, AlarmDismissReceiver::class.java)
+        val dismissPendingIntent = PendingIntent.getBroadcast(
+            this,
+            alarmId.hashCode() + 1,
+            dismissIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
 
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
             .setContentTitle("⏰ $title")
             .setContentText("Target: $timeString ($timeZone)")
             .setPriority(NotificationCompat.PRIORITY_MAX)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setAutoCancel(true)
             .setOngoing(true)
-            .setSound(alarmSound)
-            .setVibrate(longArrayOf(0, 800, 400, 800, 400, 800))
+            .setAutoCancel(false)
             .setFullScreenIntent(fullScreenPendingIntent, true)
             .setContentIntent(fullScreenPendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Dismiss Alarm", dismissPendingIntent)
             .build()
 
-        val notificationId = (System.currentTimeMillis() % 100000).toInt()
-        notificationManager.notify(notificationId, notification)
+        startForeground(NOTIFICATION_ID, notification)
 
-        // Trigger hardware vibration immediately
+        // Play loud audible sound through the ALARM audio stream
+        playAlarmSound(volume.toFloat())
+
+        // Hardware vibration
+        if (vibrate) {
+            startVibration()
+        }
+
+        return START_NOT_STICKY
+    }
+
+    private fun playAlarmSound(volume: Float) {
         try {
-            val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
-            if (vibrator != null && vibrator.hasVibrator()) {
+            var alarmUri: Uri? = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM)
+            if (alarmUri == null) {
+                alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE)
+            }
+            if (alarmUri == null) {
+                alarmUri = RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION)
+            }
+
+            mediaPlayer?.release()
+            mediaPlayer = MediaPlayer().apply {
+                setDataSource(applicationContext, alarmUri!!)
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .setUsage(AudioAttributes.USAGE_ALARM)
+                        .build()
+                )
+                setVolume(volume, volume)
+                isLooping = true
+                prepare()
+                start()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun startVibration() {
+        try {
+            vibrator = getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            if (vibrator != null && vibrator!!.hasVibrator()) {
+                val pattern = longArrayOf(0, 800, 400, 800, 400, 800)
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 800, 400, 800, 400, 800), -1))
+                    vibrator?.vibrate(VibrationEffect.createWaveform(pattern, 0)) // repeat index 0
                 } else {
-                    vibrator.vibrate(longArrayOf(0, 800, 400, 800, 400, 800), -1)
+                    @Suppress("DEPRECATION")
+                    vibrator?.vibrate(pattern, 0)
                 }
             }
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
 
-        // Release wake lock safely after a short delay
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            try {
-                if (wakeLock != null && wakeLock.isHeld) {
-                    wakeLock.release()
-                }
-            } catch (e: Exception) {}
-        }, 5000L)
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Timezone Alarm Ringing Alerts",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Critical alerts when alarm rings even if app is closed"
+                setBypassDnd(true)
+                lockscreenVisibility = NotificationCompat.VISIBILITY_PUBLIC
+                enableVibration(false) // handled via Vibrator directly
+                setSound(null, null)   // handled via MediaPlayer directly on ALARM stream
+            }
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        try {
+            mediaPlayer?.stop()
+            mediaPlayer?.release()
+            mediaPlayer = null
+        } catch (e: Exception) {}
+
+        try {
+            vibrator?.cancel()
+            vibrator = null
+        } catch (e: Exception) {}
+
+        try {
+            if (wakeLock != null && wakeLock!!.isHeld) {
+                wakeLock?.release()
+                wakeLock = null
+            }
+        } catch (e: Exception) {}
+    }
+}
+
+class AlarmReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        AlarmSoundService.startService(context, intent)
+    }
+}
+
+class AlarmDismissReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        AlarmSoundService.stopService(context)
     }
 }
 
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action == Intent.ACTION_BOOT_COMPLETED || 
+        if (intent.action == Intent.ACTION_BOOT_COMPLETED ||
             intent.action == "android.intent.action.QUICKBOOT_POWERON" ||
             intent.action == "com.htc.intent.action.QUICKBOOT_POWERON") {
             AlarmScheduler.rescheduleAllOnBoot(context)

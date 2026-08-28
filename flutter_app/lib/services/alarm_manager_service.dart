@@ -51,11 +51,14 @@ class AlarmManagerService extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     _use24Hour = prefs.getBool('tz_use_24h') ?? false;
 
+    final bool isInitialized = prefs.getBool('tz_app_initialized_v2') ?? false;
     final List<String>? stored = prefs.getStringList('tz_saved_alarms_v2');
-    if (stored != null && stored.isNotEmpty) {
-      _alarms = stored.map((s) => Alarm.fromJson(s)).toList();
+
+    if (isInitialized) {
+      // User has already initialized the app; load exact stored alarms (even if empty after user deletes all)
+      _alarms = stored != null ? stored.map((s) => Alarm.fromJson(s)).toList() : [];
     } else {
-      // Seed preset alarms matching the web app
+      // First install/run only: Seed initial preset alarms
       _alarms = [
         Alarm(
           id: 'alarm-sample-pst',
@@ -94,6 +97,7 @@ class AlarmManagerService extends ChangeNotifier {
           createdAt: DateTime.now().millisecondsSinceEpoch - 10800000,
         ),
       ];
+      await prefs.setBool('tz_app_initialized_v2', true);
       _saveAlarms();
     }
     _syncNativeAlarms();
@@ -102,6 +106,7 @@ class AlarmManagerService extends ChangeNotifier {
 
   Future<void> _saveAlarms() async {
     final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('tz_app_initialized_v2', true);
     final List<String> encoded = _alarms.map((a) => a.toJson()).toList();
     await prefs.setStringList('tz_saved_alarms_v2', encoded);
     _syncNativeAlarms();
@@ -129,6 +134,9 @@ class AlarmManagerService extends ChangeNotifier {
           'title': alarm.title,
           'sourceTimeZone': alarm.sourceTimeZone,
           'sourceTime': alarm.sourceTime,
+          'sound': alarm.sound,
+          'volume': alarm.volume,
+          'vibrate': alarm.vibrate,
           'enabled': alarm.enabled,
           'nextTriggerMillis': nextTrigger.millisecondsSinceEpoch,
         };

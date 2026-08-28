@@ -28,7 +28,8 @@ import {
   CheckCircle,
 } from 'lucide-react';
 
-const STORAGE_KEY = 'tz_alarms_data_v1';
+const STORAGE_KEY = 'tz_alarms_data_v2';
+const INITIALIZED_KEY = 'tz_alarms_initialized_v2';
 const TIME_FORMAT_KEY = 'tz_time_format_24h';
 
 // Default initial alarms showcasing the user's specific request
@@ -78,14 +79,18 @@ export default function App() {
   const [localTimeZone, setLocalTimeZone] = useState<string>(() => getUserLocalTimeZone());
   const [alarms, setAlarms] = useState<Alarm[]>(() => {
     try {
-      const saved = localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        return JSON.parse(saved);
+      const isInitialized = localStorage.getItem(INITIALIZED_KEY) === 'true';
+      if (isInitialized) {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        return saved ? JSON.parse(saved) : [];
       }
+      // First time initial seeding
+      localStorage.setItem(INITIALIZED_KEY, 'true');
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_ALARMS));
+      return INITIAL_ALARMS;
     } catch {
-      // ignore
+      return INITIAL_ALARMS;
     }
-    return INITIAL_ALARMS;
   });
 
   const [use24Hour, setUse24Hour] = useState<boolean>(() => {
