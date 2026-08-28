@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import '../services/alarm_manager_service.dart';
 import '../widgets/alarm_card.dart';
 import '../widgets/create_alarm_sheet.dart';
+import '../widgets/offline_status_banner.dart';
 
 class HomeScreen extends StatelessWidget {
   final AlarmManagerService alarmService;
@@ -41,31 +42,38 @@ class HomeScreen extends StatelessWidget {
           ],
         ),
       ),
-      body: alarmService.alarms.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.public, size: 64, color: Colors.indigo.withOpacity(0.4)),
-                  const SizedBox(height: 16),
-                  const Text('No Global Alarms Set', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 8),
-                  const Text('Set an alarm in New York, London, or Tokyo', style: TextStyle(color: Colors.grey)),
-                ],
-              ),
-            )
-          : ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: alarmService.alarms.length,
-              itemBuilder: (context, index) {
-                final alarm = alarmService.alarms[index];
-                return AlarmCard(
-                  alarm: alarm,
-                  onToggle: () => alarmService.toggleAlarm(alarm.id),
-                  onDelete: () => alarmService.deleteAlarm(alarm.id),
-                );
-              },
-            ),
+      body: Column(
+        children: [
+          const OfflineStatusBanner(),
+          Expanded(
+            child: alarmService.alarms.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.public, size: 64, color: Colors.indigo.withOpacity(0.4)),
+                        const SizedBox(height: 16),
+                        const Text('No Global Alarms Set', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600)),
+                        const SizedBox(height: 8),
+                        const Text('Set an alarm in New York, London, or Tokyo', style: TextStyle(color: Colors.grey)),
+                      ],
+                    ),
+                  )
+                : ListView.builder(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                    itemCount: alarmService.alarms.length,
+                    itemBuilder: (context, index) {
+                      final alarm = alarmService.alarms[index];
+                      return AlarmCard(
+                        alarm: alarm,
+                        onToggle: () => alarmService.toggleAlarm(alarm.id),
+                        onDelete: () => alarmService.deleteAlarm(alarm.id),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton.extended(
         backgroundColor: const Color(0xFF6366F1),
         onPressed: () {

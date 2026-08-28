@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'services/timezone_helper.dart';
 import 'services/alarm_manager_service.dart';
 import 'screens/home_screen.dart';
@@ -32,7 +31,6 @@ class _TimezoneAlarmAppState extends State<TimezoneAlarmApp> {
           theme: ThemeData.dark().copyWith(
             scaffoldBackgroundColor: const Color(0xFF020617),
             primaryColor: const Color(0xFF6366F1),
-            textTheme: GoogleFonts.interTextTheme(ThemeData.dark().textTheme),
             colorScheme: const ColorScheme.dark(
               primary: Color(0xFF6366F1),
               surface: Color(0xFF0F172A),
