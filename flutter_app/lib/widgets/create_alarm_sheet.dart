@@ -279,7 +279,7 @@ class _CreateAlarmSheetState extends State<CreateAlarmSheet> {
                           ),
                           child: const Row(
                             children: [
-                              Icon(Icons.edit_time, color: Color(0xFF818CF8), size: 14),
+                              Icon(Icons.schedule, color: Color(0xFF818CF8), size: 14),
                               SizedBox(width: 4),
                               Text('Change', style: TextStyle(fontSize: 12, color: Color(0xFF818CF8), fontWeight: FontWeight.bold)),
                             ],
