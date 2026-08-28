@@ -18,7 +18,34 @@ class TimezoneConverterSheet extends StatefulWidget {
 
 class _TimezoneConverterSheetState extends State<TimezoneConverterSheet> {
   String _sourceTz = 'America/Los_Angeles';
-  double _hourSlider = 6.5; // 6:30 AM default
+  late double _hourSlider;
+
+  @override
+  void initState() {
+    super.initState();
+    final nowInTz = TimeZoneHelper.getNowInZone(_sourceTz);
+    final h = nowInTz['hour'] ?? DateTime.now().hour;
+    final m = nowInTz['minute'] ?? DateTime.now().minute;
+    _hourSlider = h + (m / 60.0);
+  }
+
+  void _setCurrentTime() {
+    final nowInTz = TimeZoneHelper.getNowInZone(_sourceTz);
+    final h = nowInTz['hour'] ?? DateTime.now().hour;
+    final m = nowInTz['minute'] ?? DateTime.now().minute;
+    setState(() {
+      _hourSlider = h + (m / 60.0);
+    });
+  }
+
+  void _adjustTime({double deltaHours = 0}) {
+    setState(() {
+      double nextVal = _hourSlider + deltaHours;
+      if (nextVal < 0) nextVal += 24;
+      if (nextVal >= 24) nextVal -= 24;
+      _hourSlider = nextVal;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -167,9 +194,9 @@ class _TimezoneConverterSheetState extends State<TimezoneConverterSheet> {
                       Column(
                         crossAxisAlignment: CrossAxisAlignment.end,
                         children: [
-                          const Text(
-                            'Your Local Alarm Time',
-                            style: TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                          Text(
+                            'Local Time (${conversion.localAbbreviation.isNotEmpty ? conversion.localAbbreviation : TimeZoneHelper.getLocalTimeZoneName()})',
+                            style: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
                           ),
                           const SizedBox(height: 4),
                           Row(
@@ -215,6 +242,22 @@ class _TimezoneConverterSheetState extends State<TimezoneConverterSheet> {
                         style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: Color(0xFFF59E0B)),
                       ),
                       const Text('11:45 PM', style: TextStyle(fontSize: 10, color: Color(0xFF64748B))),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  // Stepper buttons to go back and front
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    alignment: WrapAlignment.center,
+                    children: [
+                      _buildStepperBtn('⚡ Now', _setCurrentTime, isHighlight: true),
+                      _buildStepperBtn('-1h', () => _adjustTime(deltaHours: -1)),
+                      _buildStepperBtn('+1h', () => _adjustTime(deltaHours: 1)),
+                      _buildStepperBtn('-15m', () => _adjustTime(deltaHours: -0.25)),
+                      _buildStepperBtn('+15m', () => _adjustTime(deltaHours: 0.25)),
+                      _buildStepperBtn('-5m', () => _adjustTime(deltaHours: -5 / 60)),
+                      _buildStepperBtn('+5m', () => _adjustTime(deltaHours: 5 / 60)),
                     ],
                   ),
                 ],
@@ -288,6 +331,33 @@ class _TimezoneConverterSheetState extends State<TimezoneConverterSheet> {
             fontSize: 11.5,
             color: isSelected ? const Color(0xFF818CF8) : const Color(0xFFCBD5E1),
             fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStepperBtn(String label, VoidCallback onTap, {bool isHighlight = false}) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: isHighlight
+              ? const Color(0xFF6366F1).withOpacity(0.25)
+              : const Color(0xFF1E293B).withOpacity(0.6),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isHighlight ? const Color(0xFF818CF8) : const Color(0xFF334155),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11.5,
+            fontWeight: FontWeight.w700,
+            color: isHighlight ? const Color(0xFFA5B4FC) : const Color(0xFFCBD5E1),
           ),
         ),
       ),

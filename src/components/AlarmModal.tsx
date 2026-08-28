@@ -187,6 +187,27 @@ export function AlarmModal({
     if (type === 'weekends') setDays([0, 6]);
   };
 
+  const adjustTime = (deltaHours: number, deltaMinutes: number) => {
+    let currentH24 = hour;
+    if (period === 'PM' && hour < 12) currentH24 = hour + 12;
+    if (period === 'AM' && hour === 12) currentH24 = 0;
+
+    let totalMinutes = currentH24 * 60 + minute + deltaHours * 60 + deltaMinutes;
+    totalMinutes = ((totalMinutes % 1440) + 1440) % 1440;
+
+    const nextH24 = Math.floor(totalMinutes / 60);
+    const nextM = totalMinutes % 60;
+
+    if (nextH24 >= 12) {
+      setPeriod('PM');
+      setHour(nextH24 === 12 ? 12 : nextH24 - 12);
+    } else {
+      setPeriod('AM');
+      setHour(nextH24 === 0 ? 12 : nextH24);
+    }
+    setMinute(nextM);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSave(
@@ -445,68 +466,50 @@ export function AlarmModal({
 
               <button
                 type="button"
-                onClick={() => {
-                  const now = new Date();
-                  const targetDate = new Date(now.getTime() + 60 * 1000); // +1 min
-                  const parts = getZonedDateParts(targetDate, sourceTimeZone);
-                  const currH = parts.hour;
-                  const currM = parts.minute;
-                  if (currH >= 12) {
-                    setPeriod('PM');
-                    setHour(currH === 12 ? 12 : currH - 12);
-                  } else {
-                    setPeriod('AM');
-                    setHour(currH === 0 ? 12 : currH);
-                  }
-                  setMinute(currM);
-                }}
-                className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 hover:bg-emerald-500/20 transition"
+                onClick={() => adjustTime(-1, 0)}
+                className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition"
               >
-                +1 min
+                -1h
               </button>
 
               <button
                 type="button"
-                onClick={() => {
-                  const now = new Date();
-                  const targetDate = new Date(now.getTime() + 5 * 60 * 1000); // +5 min
-                  const parts = getZonedDateParts(targetDate, sourceTimeZone);
-                  const currH = parts.hour;
-                  const currM = parts.minute;
-                  if (currH >= 12) {
-                    setPeriod('PM');
-                    setHour(currH === 12 ? 12 : currH - 12);
-                  } else {
-                    setPeriod('AM');
-                    setHour(currH === 0 ? 12 : currH);
-                  }
-                  setMinute(currM);
-                }}
-                className="text-[11px] px-2 py-1 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition"
+                onClick={() => adjustTime(1, 0)}
+                className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition"
               >
-                +5 min
+                +1h
               </button>
 
               <button
                 type="button"
-                onClick={() => {
-                  const now = new Date();
-                  const targetDate = new Date(now.getTime() + 15 * 60 * 1000); // +15 min
-                  const parts = getZonedDateParts(targetDate, sourceTimeZone);
-                  const currH = parts.hour;
-                  const currM = parts.minute;
-                  if (currH >= 12) {
-                    setPeriod('PM');
-                    setHour(currH === 12 ? 12 : currH - 12);
-                  } else {
-                    setPeriod('AM');
-                    setHour(currH === 0 ? 12 : currH);
-                  }
-                  setMinute(currM);
-                }}
-                className="text-[11px] px-2 py-1 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition"
+                onClick={() => adjustTime(0, -15)}
+                className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition"
               >
-                +15 min
+                -15m
+              </button>
+
+              <button
+                type="button"
+                onClick={() => adjustTime(0, 15)}
+                className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition"
+              >
+                +15m
+              </button>
+
+              <button
+                type="button"
+                onClick={() => adjustTime(0, -5)}
+                className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition"
+              >
+                -5m
+              </button>
+
+              <button
+                type="button"
+                onClick={() => adjustTime(0, 5)}
+                className="text-[11px] font-semibold px-2 py-1 rounded-lg bg-slate-800 text-slate-300 hover:bg-slate-700 transition"
+              >
+                +5m
               </button>
 
               {[

@@ -166,7 +166,10 @@ class TimeZoneHelper {
       if (candidateSourceTime.isBefore(nowInSource)) {
         candidateSourceTime = candidateSourceTime.add(const Duration(days: 1));
       }
-      return candidateSourceTime.toLocal();
+      return DateTime.fromMillisecondsSinceEpoch(
+        candidateSourceTime.millisecondsSinceEpoch,
+        isUtc: false,
+      );
     }
 
     // Check next 7 days for matching recurring day
@@ -174,15 +177,22 @@ class TimeZoneHelper {
       final checkTime = candidateSourceTime.add(Duration(days: i));
       if (normalizedDays.contains(checkTime.weekday)) {
         if (i > 0 || checkTime.isAfter(nowInSource)) {
-          return checkTime.toLocal();
+          return DateTime.fromMillisecondsSinceEpoch(
+            checkTime.millisecondsSinceEpoch,
+            isUtc: false,
+          );
         }
       }
     }
 
-    return candidateSourceTime.add(const Duration(days: 1)).toLocal();
+    final fallback = candidateSourceTime.add(const Duration(days: 1));
+    return DateTime.fromMillisecondsSinceEpoch(
+      fallback.millisecondsSinceEpoch,
+      isUtc: false,
+    );
   }
 
-  /// Convert source time "HH:mm" in source timezone to local time representation
+  /// Convert source time "HH:mm" in source timezone to device's actual local time representation
   static ConvertedTimeResult convertSourceToLocal({
     required String sourceTime, // "HH:mm"
     required String sourceTimeZone,
@@ -206,18 +216,29 @@ class TimeZoneHelper {
       minute,
     );
 
-    final localEquivalent = sourceTzDate.toLocal();
+    // Convert from the exact UTC moment of source timezone to device's real native local time
+    final localEquivalent = DateTime.fromMillisecondsSinceEpoch(
+      sourceTzDate.millisecondsSinceEpoch,
+      isUtc: false,
+    );
 
     final sourceFormat = DateFormat(use24Hour ? 'HH:mm' : 'h:mm a');
     final localFormat = DateFormat(use24Hour ? 'HH:mm' : 'h:mm a');
 
-    final hourDiff = (localEquivalent.difference(sourceTzDate).inHours);
-    
+    final sourceUtcOffsetMinutes = sourceTzDate.timeZoneOffset.inMinutes;
+    final localUtcOffsetMinutes = localEquivalent.timeZoneOffset.inMinutes;
+    final totalDiffMinutes = localUtcOffsetMinutes - sourceUtcOffsetMinutes;
+    final hourDiff = totalDiffMinutes ~/ 60;
+
     String dayDiff = 'Same day';
-    if (localEquivalent.day > sourceTzDate.day) {
-      dayDiff = '+1 day';
-    } else if (localEquivalent.day < sourceTzDate.day) {
-      dayDiff = '-1 day';
+    final sourceCalendarDay = DateTime(sourceTzDate.year, sourceTzDate.month, sourceTzDate.day);
+    final localCalendarDay = DateTime(localEquivalent.year, localEquivalent.month, localEquivalent.day);
+    final dayDifferenceInDays = localCalendarDay.difference(sourceCalendarDay).inDays;
+
+    if (dayDifferenceInDays > 0) {
+      dayDiff = '+${dayDifferenceInDays} day';
+    } else if (dayDifferenceInDays < 0) {
+      dayDiff = '${dayDifferenceInDays} day';
     }
 
     return ConvertedTimeResult(
@@ -233,18 +254,47 @@ class TimeZoneHelper {
   }
 
   static String formatDurationUntil(DateTime target) {
-    final diff = target.difference(DateTime.now());
-    if (diff.isNegative) return 'due now';
+    final now = DateTime.now();
+    final diff = target.difference(now);
+    if (diff.isNegative || diff.inSeconds <= 0) return 'due now';
 
     final days = diff.inDays;
     final hours = diff.inHours % 24;
     final minutes = diff.inMinutes % 60;
+    final seconds = diff.inSeconds % 60;
 
     if (days > 0) {
+      if (hours == 0) return 'in ${days}d';
       return 'in ${days}d ${hours}h';
     } else if (hours > 0) {
+      if (minutes == 0) return 'in ${hours}h';
       return 'in ${hours}h ${minutes}m';
+    } else if (minutes > 0) {
+      return 'in ${minutes}m';
     }
-    return 'in ${minutes}m';
+    return 'in ${seconds}s';
+  }
+
+  /// Returns current hour & minute in given timezone
+  static Map<String, int> getNowInZone(String iana) {
+    initialize();
+    final now = DateTime.now();
+    final loc = getLocation(iana);
+    final tzNow = tz.TZDateTime.from(now, loc);
+    return {'hour': tzNow.hour, 'minute': tzNow.minute};
+  }
+
+  /// Convert desired local device time (localHour, localMinute) into source timezone (sourceHour, sourceMinute)
+  static Map<String, int> convertLocalToSource({
+    required int localHour,
+    required int localMinute,
+    required String sourceTimeZone,
+  }) {
+    initialize();
+    final now = DateTime.now();
+    final localDt = DateTime(now.year, now.month, now.day, localHour, localMinute);
+    final sourceLoc = getLocation(sourceTimeZone);
+    final sourceTzDate = tz.TZDateTime.from(localDt, sourceLoc);
+    return {'hour': sourceTzDate.hour, 'minute': sourceTzDate.minute};
   }
 }

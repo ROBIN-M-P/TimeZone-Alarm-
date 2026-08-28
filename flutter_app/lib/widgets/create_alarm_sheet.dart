@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 import '../models/alarm.dart';
 import '../services/timezone_helper.dart';
@@ -34,6 +35,7 @@ class _CreateAlarmSheetState extends State<CreateAlarmSheet> {
   late String _selectedSound;
   late double _volume;
   late bool _vibrate;
+  bool _setByLocalTime = false; // Toggle to set via user's local time
 
   String _searchFilter = '';
 
@@ -68,8 +70,10 @@ class _CreateAlarmSheetState extends State<CreateAlarmSheet> {
         _selectedHour = int.tryParse(parts[0]) ?? 6;
         _selectedMinute = int.tryParse(parts.length > 1 ? parts[1] : '30') ?? 30;
       } else {
-        _selectedHour = 6;
-        _selectedMinute = 30;
+        // Initialize with real-time current clock in the chosen timezone
+        final nowInTz = TimeZoneHelper.getNowInZone(_selectedZone);
+        _selectedHour = nowInTz['hour'] ?? DateTime.now().hour;
+        _selectedMinute = nowInTz['minute'] ?? DateTime.now().minute;
       }
 
       _selectedDays = [1, 2, 3, 4, 5]; // Mon-Fri default
@@ -85,10 +89,48 @@ class _CreateAlarmSheetState extends State<CreateAlarmSheet> {
     super.dispose();
   }
 
+  void _adjustTime({int deltaMinutes = 0, int deltaHours = 0}) {
+    setState(() {
+      int totalMinutes = (_selectedHour * 60 + _selectedMinute) + (deltaHours * 60) + deltaMinutes;
+      // Handle wrap-around across 24 hours (1440 minutes)
+      totalMinutes = (totalMinutes % 1440 + 1440) % 1440;
+      _selectedHour = totalMinutes ~/ 60;
+      _selectedMinute = totalMinutes % 60;
+    });
+  }
+
+  void _setCurrentTime() {
+    if (_setByLocalTime) {
+      final now = DateTime.now();
+      final converted = TimeZoneHelper.convertLocalToSource(
+        localHour: now.hour,
+        localMinute: now.minute,
+        sourceTimeZone: _selectedZone,
+      );
+      setState(() {
+        _selectedHour = converted['hour'] ?? now.hour;
+        _selectedMinute = converted['minute'] ?? now.minute;
+      });
+    } else {
+      final nowInTz = TimeZoneHelper.getNowInZone(_selectedZone);
+      setState(() {
+        _selectedHour = nowInTz['hour'] ?? DateTime.now().hour;
+        _selectedMinute = nowInTz['minute'] ?? DateTime.now().minute;
+      });
+    }
+  }
+
   void _pickTime() async {
+    final initialHour = _setByLocalTime
+        ? _getLocalHourMinute()['hour']!
+        : _selectedHour;
+    final initialMin = _setByLocalTime
+        ? _getLocalHourMinute()['minute']!
+        : _selectedMinute;
+
     final TimeOfDay? picked = await showTimePicker(
       context: context,
-      initialTime: TimeOfDay(hour: _selectedHour, minute: _selectedMinute),
+      initialTime: TimeOfDay(hour: initialHour, minute: initialMin),
       builder: (context, child) {
         return Theme(
           data: ThemeData.dark().copyWith(
@@ -101,12 +143,38 @@ class _CreateAlarmSheetState extends State<CreateAlarmSheet> {
         );
       },
     );
+
     if (picked != null) {
-      setState(() {
-        _selectedHour = picked.hour;
-        _selectedMinute = picked.minute;
-      });
+      if (_setByLocalTime) {
+        final converted = TimeZoneHelper.convertLocalToSource(
+          localHour: picked.hour,
+          localMinute: picked.minute,
+          sourceTimeZone: _selectedZone,
+        );
+        setState(() {
+          _selectedHour = converted['hour'] ?? picked.hour;
+          _selectedMinute = converted['minute'] ?? picked.minute;
+        });
+      } else {
+        setState(() {
+          _selectedHour = picked.hour;
+          _selectedMinute = picked.minute;
+        });
+      }
     }
+  }
+
+  Map<String, int> _getLocalHourMinute() {
+    final time24Str = '${_selectedHour.toString().padLeft(2, '0')}:${_selectedMinute.toString().padLeft(2, '0')}';
+    final conv = TimeZoneHelper.convertSourceToLocal(
+      sourceTime: time24Str,
+      sourceTimeZone: _selectedZone,
+      use24Hour: true,
+    );
+    final parts = conv.localFormatted.split(':');
+    final h = int.tryParse(parts[0]) ?? 0;
+    final m = int.tryParse(parts.length > 1 ? parts[1] : '0') ?? 0;
+    return {'hour': h, 'minute': m};
   }
 
   @override
@@ -123,14 +191,16 @@ class _CreateAlarmSheetState extends State<CreateAlarmSheet> {
       orElse: () => TimeZoneHelper.allTimeZones.first,
     );
 
-    final filteredZones = TimeZoneHelper.allTimeZones.where((z) {
-      if (_searchFilter.isEmpty) return true;
-      final q = _searchFilter.toLowerCase();
-      return z.city.toLowerCase().contains(q) ||
-          z.country.toLowerCase().contains(q) ||
-          z.label.toLowerCase().contains(q) ||
-          z.iana.toLowerCase().contains(q);
-    }).toList();
+    final filteredZones = TimeZoneHelper.allTimeZones;
+
+    final nextOccurrence = TimeZoneHelper.calculateNextLocalOccurrence(
+      sourceTimeZone: _selectedZone,
+      sourceHour: _selectedHour,
+      sourceMinute: _selectedMinute,
+      repeatDays: _selectedDays,
+    );
+    final relativeCountdown = TimeZoneHelper.formatDurationUntil(nextOccurrence);
+    final nextOccurrenceFormatted = DateFormat(widget.use24Hour ? 'EEE, HH:mm' : 'EEE, h:mm a').format(nextOccurrence);
 
     return Container(
       constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.9),
@@ -237,78 +307,219 @@ class _CreateAlarmSheetState extends State<CreateAlarmSheet> {
             const SizedBox(height: 16),
 
             // Dual Time Preview & Picker Card
-            const Text(
-              '2. TIME IN REMOTE TIMEZONE',
-              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF94A3B8), letterSpacing: 1),
-            ),
-            const SizedBox(height: 6),
-            InkWell(
-              onTap: _pickTime,
-              borderRadius: BorderRadius.circular(16),
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF020617),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFF6366F1).withOpacity(0.4)),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  '2. SET ALARM TIME',
+                  style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700, color: Color(0xFF94A3B8), letterSpacing: 1),
                 ),
-                child: Column(
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '${selectedZoneInfo.flag} In ${selectedZoneInfo.city}',
-                              style: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              conversion.sourceFormatted,
-                              style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Color(0xFF38BDF8)),
-                            ),
-                          ],
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                // Toggle between setting by Remote Time vs Local Time
+                Container(
+                  padding: const EdgeInsets.all(2),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF020617),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFF1E293B)),
+                  ),
+                  child: Row(
+                    children: [
+                      InkWell(
+                        onTap: () => setState(() => _setByLocalTime = false),
+                        borderRadius: BorderRadius.circular(6),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF6366F1).withOpacity(0.2),
-                            borderRadius: BorderRadius.circular(8),
+                            color: !_setByLocalTime ? const Color(0xFF6366F1) : Colors.transparent,
+                            borderRadius: BorderRadius.circular(6),
                           ),
-                          child: const Row(
+                          child: Text(
+                            'Remote (${selectedZoneInfo.city})',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: !_setByLocalTime ? FontWeight.bold : FontWeight.normal,
+                              color: !_setByLocalTime ? Colors.white : const Color(0xFF94A3B8),
+                            ),
+                          ),
+                        ),
+                      ),
+                      InkWell(
+                        onTap: () => setState(() => _setByLocalTime = true),
+                        borderRadius: BorderRadius.circular(6),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: _setByLocalTime ? const Color(0xFF10B981) : Colors.transparent,
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            'My Local Time',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: _setByLocalTime ? FontWeight.bold : FontWeight.normal,
+                              color: _setByLocalTime ? Colors.white : const Color(0xFF94A3B8),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: const Color(0xFF020617),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(
+                  color: _setByLocalTime
+                      ? const Color(0xFF10B981).withOpacity(0.5)
+                      : const Color(0xFF6366F1).withOpacity(0.5),
+                ),
+              ),
+              child: Column(
+                children: [
+                  InkWell(
+                    onTap: _pickTime,
+                    borderRadius: BorderRadius.circular(12),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Icon(Icons.schedule, color: Color(0xFF818CF8), size: 14),
-                              SizedBox(width: 4),
-                              Text('Change', style: TextStyle(fontSize: 12, color: Color(0xFF818CF8), fontWeight: FontWeight.bold)),
+                              Row(
+                                children: [
+                                  Text(
+                                    '${selectedZoneInfo.flag} In ${selectedZoneInfo.city}',
+                                    style: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
+                                  ),
+                                  if (!_setByLocalTime) ...[
+                                    const SizedBox(width: 6),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF6366F1).withOpacity(0.2),
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: const Text(
+                                        'Primary Target',
+                                        style: TextStyle(fontSize: 9.5, color: Color(0xFF818CF8), fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                conversion.sourceFormatted,
+                                style: const TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: Color(0xFF38BDF8)),
+                              ),
                             ],
                           ),
-                        ),
-                      ],
-                    ),
-                    const Divider(color: Color(0xFF1E293B), height: 20),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Row(
-                          children: [
-                            Icon(Icons.notifications_active, color: Color(0xFF4ADE80), size: 16),
-                            SizedBox(width: 6),
-                            Text(
-                              'Equivalent Local Alarm:',
-                              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Colors.white70),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF6366F1).withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(8),
                             ),
-                          ],
-                        ),
-                        Text(
-                          '${conversion.localFormatted} (${conversion.dayDifference})',
-                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF4ADE80)),
+                            child: const Row(
+                              children: [
+                                Icon(Icons.schedule, color: Color(0xFF818CF8), size: 14),
+                                SizedBox(width: 4),
+                                Text('Pick Time', style: TextStyle(fontSize: 12, color: Color(0xFF818CF8), fontWeight: FontWeight.bold)),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  const Divider(color: Color(0xFF1E293B), height: 18),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.notifications_active, color: Color(0xFF4ADE80), size: 16),
+                          const SizedBox(width: 6),
+                          Text(
+                            'Local Alarm (${conversion.localAbbreviation.isNotEmpty ? conversion.localAbbreviation : TimeZoneHelper.getLocalTimeZoneName()}):',
+                            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: Colors.white70),
+                          ),
+                        ],
+                      ),
+                      Text(
+                        '${conversion.localFormatted} (${conversion.dayDifference})',
+                        style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF4ADE80)),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  // Quick Stepper Buttons: go back and front as user required
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    alignment: WrapAlignment.center,
+                    children: [
+                      _buildStepperBtn(
+                        label: '⚡ Now',
+                        onTap: _setCurrentTime,
+                        isHighlight: true,
+                      ),
+                      _buildStepperBtn(
+                        label: '-1h',
+                        onTap: () => _adjustTime(deltaHours: -1),
+                      ),
+                      _buildStepperBtn(
+                        label: '+1h',
+                        onTap: () => _adjustTime(deltaHours: 1),
+                      ),
+                      _buildStepperBtn(
+                        label: '-15m',
+                        onTap: () => _adjustTime(deltaMinutes: -15),
+                      ),
+                      _buildStepperBtn(
+                        label: '+15m',
+                        onTap: () => _adjustTime(deltaMinutes: 15),
+                      ),
+                      _buildStepperBtn(
+                        label: '-5m',
+                        onTap: () => _adjustTime(deltaMinutes: -5),
+                      ),
+                      _buildStepperBtn(
+                        label: '+5m',
+                        onTap: () => _adjustTime(deltaMinutes: 5),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF6366F1).withOpacity(0.15),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: const Color(0xFF6366F1).withOpacity(0.3)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.timer_outlined, color: Color(0xFF818CF8), size: 14),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            'Rings $relativeCountdown • Next: $nextOccurrenceFormatted',
+                            style: const TextStyle(fontSize: 11.5, color: Color(0xFFA5B4FC), fontWeight: FontWeight.w600),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                       ],
                     ),
-                  ],
-                ),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 16),
@@ -487,6 +698,37 @@ class _CreateAlarmSheetState extends State<CreateAlarmSheet> {
             color: isSelected ? Colors.white : const Color(0xFF94A3B8),
             fontWeight: FontWeight.bold,
             fontSize: 13,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildStepperBtn({
+    required String label,
+    required VoidCallback onTap,
+    bool isHighlight = false,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(
+          color: isHighlight
+              ? const Color(0xFF6366F1).withOpacity(0.25)
+              : const Color(0xFF1E293B).withOpacity(0.6),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: isHighlight ? const Color(0xFF818CF8) : const Color(0xFF334155),
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11.5,
+            fontWeight: FontWeight.w700,
+            color: isHighlight ? const Color(0xFFA5B4FC) : const Color(0xFFCBD5E1),
           ),
         ),
       ),
